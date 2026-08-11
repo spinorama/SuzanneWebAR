@@ -4,8 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>WebAR Image Tracker</title>
-<!-- IMPORTANT: A-Frame 1.3.0 is the version MindAR 1.2.5 was built for.
-     Newer A-Frame (1.4+/1.5) causes a BLACK camera background. Do not bump this. -->
+<!-- A-Frame 1.3.0 is the version MindAR 1.2.5 targets. Newer A-Frame => black camera. Do NOT bump. -->
 <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
@@ -21,15 +20,25 @@
   #start:active{transform:scale(.98)}
   #bar{width:260px;height:8px;border-radius:8px;background:#26263a;overflow:hidden;display:none}
   #bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2e86de,#10ac84)}
-  #status{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:15;
+  #status{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:30;
     padding:7px 14px;border-radius:999px;background:#0009;font-size:12px;display:none;backdrop-filter:blur(6px)}
   .hint{font-size:11px;color:#6f6f88}
-  /* Make sure the AR canvas is transparent so the camera video shows through */
-  a-scene, .a-canvas{background:transparent !important}
+  /* Camera video sits behind; keep the GL canvas transparent so it shows through */
+  a-scene, canvas.a-canvas{background:transparent !important}
+  video{background:transparent !important}
+  /* Debug */
+  #dbgBtn{position:fixed;right:12px;bottom:12px;z-index:40;width:44px;height:44px;border:0;border-radius:50%;
+    background:#000a;color:#fff;font-size:20px;display:none}
+  #dbg{position:fixed;left:8px;right:8px;bottom:64px;z-index:40;max-height:45vh;overflow:auto;
+    background:#000d;border:1px solid #333;border-radius:12px;padding:10px 12px;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;
+    color:#c7f9cc;display:none;white-space:pre-wrap}
+  #dbg b{color:#ffd32a}
 </style>
 </head>
 <body>
   <div id="status"></div>
+  <button id="dbgBtn" title="debug">🐞</button>
+  <div id="dbg"></div>
   <div id="ui">
     <h1>📐 WebAR Image Tracker</h1>
     <p>Point your camera at the <b>printed tracker image</b>. A UV-grid model will lock onto it. Move the tracker and the model follows.</p>
@@ -6104,14 +6113,13 @@ illum 1
 
 /* Any mesh/material whose name matches is HIDDEN in AR (your tracker plane). */
 const HIDE_PATTERN = /tracker/i;
-
-/* how the model sits on the flat tracker */
 const MODEL_POSITION = "0 0 0.05";
 const MODEL_ROTATION = "-90 0 0";
 const MODEL_SCALE    = "0.5 0.5 0.5";
 
 const $ = s => document.querySelector(s);
 const statusEl = $("#status");
+let lastError = "(none)";
 function setStatus(t){ statusEl.style.display="block"; statusEl.textContent=t; }
 
 const objURL = URL.createObjectURL(new Blob([OBJ_TEXT], {type:"text/plain"}));
@@ -6135,6 +6143,17 @@ async function compileTracker(){
   const buffer = await compiler.exportData();
   return URL.createObjectURL(new Blob([buffer]));
 }
+
+/* Force the WebGL canvas to clear transparently so the camera video shows through. */
+function makeTransparent(sceneEl){
+  try{
+    const r = sceneEl.renderer;
+    if (r){ r.setClearColor(0x000000, 0); r.setClearAlpha(0); r.autoClearColor = true; }
+    const c = sceneEl.canvas || document.querySelector("canvas.a-canvas");
+    if (c) c.style.background = "transparent";
+  }catch(e){ lastError = "transp: "+e.message; }
+}
+
 function onModelLoaded(e){
   const THREE = window.THREE;
   const root = (e.detail && e.detail.model) || e.target.getObject3D("mesh");
@@ -6151,11 +6170,11 @@ function onModelLoaded(e){
   });
   setStatus("Model ready — point at the tracker");
 }
+
 function buildScene(mindURL){
   const scene = document.createElement("a-scene");
   scene.setAttribute("mindar-image",
-    "imageTargetSrc: "+mindURL+"; autoStart: true; uiScanning: yes; uiLoading: no; filterMinCF: 0.0001; filterBeta: 0.005; missTolerance: 5; warmupTolerance: 5");
-  scene.setAttribute("embedded","");
+    "imageTargetSrc: "+mindURL+"; autoStart: true; uiScanning: no; uiLoading: no; filterMinCF: 0.0001; filterBeta: 0.005; missTolerance: 5; warmupTolerance: 5");
   scene.setAttribute("color-space","sRGB");
   scene.setAttribute("renderer","colorManagement: true, physicallyCorrectLights: true, alpha: true");
   scene.setAttribute("vr-mode-ui","enabled: false");
@@ -6175,26 +6194,63 @@ function buildScene(mindURL){
   model.setAttribute("rotation", MODEL_ROTATION);
   model.setAttribute("scale",    MODEL_SCALE);
   model.addEventListener("model-loaded", onModelLoaded);
-  model.addEventListener("model-error", ()=>setStatus("could not load OBJ"));
+  model.addEventListener("model-error", ()=>{ lastError="OBJ load error"; setStatus("could not load OBJ"); });
   anchor.appendChild(model);
 
   anchor.addEventListener("targetFound", ()=>setStatus("🎯 Tracker found"));
   anchor.addEventListener("targetLost",  ()=>setStatus("Searching for tracker…"));
+
+  scene.addEventListener("loaded", ()=>makeTransparent(scene));
+  scene.addEventListener("renderstart", ()=>makeTransparent(scene));
+  scene.addEventListener("arReady", ()=>{ makeTransparent(scene); setStatus("Camera ready — point at the tracker"); });
+  scene.addEventListener("arError", ()=>{ lastError="arError (browser/camera)"; setStatus("AR error — see 🐞"); });
+
   scene.appendChild(anchor);
   document.body.appendChild(scene);
+  // extra safety: reassert transparency a moment after start
+  setTimeout(()=>makeTransparent(scene), 1500);
 }
 
+/* -------------------- debug panel -------------------- */
+function renderDebug(){
+  const p = $("#dbg"); if (p.style.display==="none") return;
+  const vids = [...document.querySelectorAll("video")];
+  const v = vids[0];
+  const canv = document.querySelector("canvas.a-canvas");
+  const info = {
+    "A-Frame": (window.AFRAME && AFRAME.version) || "?",
+    "three r": (window.THREE && THREE.REVISION) || "?",
+    "video els": vids.length,
+    "video size": v ? (v.videoWidth+"x"+v.videoHeight) : "-",
+    "video ready": v ? v.readyState : "-",
+    "video paused": v ? v.paused : "-",
+    "video display": v ? getComputedStyle(v).display : "-",
+    "canvas size": canv ? (canv.width+"x"+canv.height) : "-",
+    "last error": lastError,
+  };
+  let out = "";
+  for (const k in info) out += "<b>"+k+":</b> "+info[k]+"\n";
+  p.innerHTML = out;
+}
+$("#dbgBtn").addEventListener("click", ()=>{
+  const p=$("#dbg"); p.style.display = p.style.display==="none"||!p.style.display ? "block":"none"; renderDebug();
+});
+setInterval(renderDebug, 800);
+
+/* -------------------- start -------------------- */
 $("#start").addEventListener("click", async ()=>{
   try{
     $("#start").disabled = true; $("#start").textContent = "Compiling tracker…";
     $("#bar").style.display = "block";
     const mindURL = await compileTracker();
-    $("#ui").style.display = "none"; setStatus("Starting camera…");
+    $("#ui").style.display = "none";
+    $("#dbgBtn").style.display = "block";
+    setStatus("Starting camera…");
     buildScene(mindURL);
   }catch(err){
-    console.error(err);
+    console.error(err); lastError = (err && err.message) || (""+err);
     $("#start").disabled = false; $("#start").textContent = "Start AR";
-    setStatus("Error: "+(err && err.message ? err.message : err));
+    setStatus("Error: "+lastError);
   }
 });
 </script>
