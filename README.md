@@ -32,25 +32,6 @@ image tracker, viewable right in a **mobile browser** (no app install).
 
 ---
 
-## 🔧 Swapping in your own OBJ/MTL
-
-Open `webar-tracker.html` and edit the constants near the top of the `<script>`:
-
-```js
-const OBJ_TEXT = `...`;   // paste your OBJ contents (or point obj-model to a hosted URL)
-const MTL_TEXT = `...`;   // paste your MTL contents
-
-// Any mesh/material whose name matches this is HIDDEN in AR (your tracker piece):
-const HIDE_PATTERN = /tracker/i;   // <- change to match YOUR tracker material name
-
-// Fit the model on the flat marker:
-const MODEL_POSITION = "0 0 0.05";
-const MODEL_ROTATION = "-90 0 0";  // stands the model up off a flat marker
-const MODEL_SCALE    = "0.5 0.5 0.5";
-```
-
----
-
 ## 🖨️ Tracker tips for reliable tracking
 
 - Print the tracker **matte**, keep it **flat**, and light it evenly (avoid glare).
