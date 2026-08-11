@@ -24,8 +24,11 @@
     padding:7px 14px;border-radius:999px;background:#0009;font-size:12px;display:none;backdrop-filter:blur(6px)}
   .hint{font-size:11px;color:#6f6f88}
   /* Camera video sits behind; keep the GL canvas transparent so it shows through */
-  a-scene, canvas.a-canvas{background:transparent !important}
-  video{background:transparent !important}
+  a-scene, canvas.a-canvas{background:transparent !important; z-index:1 !important}
+  /* Force MindAR's camera <video> to a full-screen background layer */
+  video{position:fixed !important; top:0 !important; left:0 !important;
+    width:100vw !important; height:100vh !important; object-fit:cover !important;
+    z-index:0 !important; background:#000 !important}
   /* Debug */
   #dbgBtn{position:fixed;right:12px;bottom:12px;z-index:40;width:44px;height:44px;border:0;border-radius:50%;
     background:#000a;color:#fff;font-size:20px;display:none}
@@ -6117,6 +6120,21 @@ const MODEL_POSITION = "0 0 0.05";
 const MODEL_ROTATION = "-90 0 0";
 const MODEL_SCALE    = "0.5 0.5 0.5";
 
+/* Force transparent clear EVERY frame — A-Frame's render loop otherwise resets
+   the clear alpha to opaque each tick, which paints black over the camera video. */
+AFRAME.registerComponent("transparent-clear", {
+  init: function(){
+    const r = this.el.renderer;
+    if (r){ r.setClearColor(0x000000, 0); r.setClearAlpha(0); r.autoClear = true; }
+    if (this.el.object3D) this.el.object3D.background = null;
+    if (this.el.sceneEl && this.el.sceneEl.object3D) this.el.sceneEl.object3D.background = null;
+  },
+  tick: function(){
+    const r = this.el.renderer;
+    if (r) r.setClearAlpha(0);   // reassert transparency each frame
+  }
+});
+
 const $ = s => document.querySelector(s);
 const statusEl = $("#status");
 let lastError = "(none)";
@@ -6179,6 +6197,7 @@ function buildScene(mindURL){
   scene.setAttribute("renderer","colorManagement: true, physicallyCorrectLights: true, alpha: true");
   scene.setAttribute("vr-mode-ui","enabled: false");
   scene.setAttribute("device-orientation-permission-ui","enabled: false");
+  scene.setAttribute("transparent-clear","");   // per-frame transparent clear
 
   const cam = document.createElement("a-camera");
   cam.setAttribute("position","0 0 0");
@@ -6217,14 +6236,19 @@ function renderDebug(){
   const vids = [...document.querySelectorAll("video")];
   const v = vids[0];
   const canv = document.querySelector("canvas.a-canvas");
+  const vs = v ? getComputedStyle(v) : null;
+  const cs = canv ? getComputedStyle(canv) : null;
+  const vr = v ? v.getBoundingClientRect() : null;
   const info = {
     "A-Frame": (window.AFRAME && AFRAME.version) || "?",
     "three r": (window.THREE && THREE.REVISION) || "?",
     "video els": vids.length,
     "video size": v ? (v.videoWidth+"x"+v.videoHeight) : "-",
+    "video onscreen": vr ? (Math.round(vr.width)+"x"+Math.round(vr.height)+" @"+Math.round(vr.left)+","+Math.round(vr.top)) : "-",
+    "video z/pos/op": vs ? (vs.zIndex+" / "+vs.position+" / "+vs.opacity) : "-",
     "video ready": v ? v.readyState : "-",
     "video paused": v ? v.paused : "-",
-    "video display": v ? getComputedStyle(v).display : "-",
+    "canvas z/op": cs ? (cs.zIndex+" / "+cs.opacity) : "-",
     "canvas size": canv ? (canv.width+"x"+canv.height) : "-",
     "last error": lastError,
   };
